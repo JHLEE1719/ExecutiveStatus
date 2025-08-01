@@ -39,6 +39,12 @@
             btnSave = new Button();
             txtName = new TextBox();
             listViewStatus = new ListView();
+            이름 = new ColumnHeader();
+            상태 = new ColumnHeader();
+            사유 = new ColumnHeader();
+            메모 = new ColumnHeader();
+            btnEdit = new Button();
+            btnDelete = new Button();
             SuspendLayout();
             // 
             // IbIName
@@ -134,21 +140,60 @@
             // 
             // listViewStatus
             // 
+            listViewStatus.Columns.AddRange(new ColumnHeader[] { 이름, 상태, 사유, 메모 });
             listViewStatus.FullRowSelect = true;
             listViewStatus.GridLines = true;
             listViewStatus.Location = new Point(0, 170);
             listViewStatus.Name = "listViewStatus";
-            listViewStatus.Size = new Size(500, 200);
+            listViewStatus.Size = new Size(245, 200);
             listViewStatus.TabIndex = 0;
             listViewStatus.UseCompatibleStateImageBehavior = false;
             listViewStatus.View = View.Details;
             listViewStatus.SelectedIndexChanged += listViewStatus_SelectedIndexChanged;
+            // 
+            // 이름
+            // 
+            이름.Text = "이름";
+            // 
+            // 상태
+            // 
+            상태.Text = "상태";
+            // 
+            // 사유
+            // 
+            사유.Text = "사유";
+            // 
+            // 메모
+            // 
+            메모.Text = "메모";
+            // 
+            // btnEdit
+            // 
+            btnEdit.Location = new Point(81, 132);
+            btnEdit.Name = "btnEdit";
+            btnEdit.Size = new Size(75, 23);
+            btnEdit.TabIndex = 11;
+            btnEdit.Text = "수정";
+            btnEdit.UseVisualStyleBackColor = true;
+            btnEdit.Click += btnEdit_Click;
+            // 
+            // btnDelete
+            // 
+            btnDelete.Location = new Point(162, 132);
+            btnDelete.Name = "btnDelete";
+            btnDelete.Size = new Size(75, 23);
+            btnDelete.TabIndex = 12;
+            btnDelete.Text = "삭제";
+            btnDelete.UseVisualStyleBackColor = true;
+            btnDelete.Click += btnDelete_Click;
             // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(800, 450);
+            Controls.Add(btnDelete);
+            Controls.Add(btnEdit);
             Controls.Add(listViewStatus);
             Controls.Add(txtName);
             Controls.Add(btnSave);
@@ -179,5 +224,11 @@
         private Button btnSave;
         private TextBox txtName;
         private ListView listViewStatus;
+        private ColumnHeader 이름;
+        private ColumnHeader 상태;
+        private ColumnHeader 사유;
+        private ColumnHeader 메모;
+        private Button btnEdit;
+        private Button btnDelete;
     }
 }
