@@ -1,144 +1,518 @@
-using System;
+ï»¿using System;
+using System.Collections.Generic;
+using System.Data.SQLite;
+using System.Drawing;
+using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace ExecutiveStatus
 {
     public partial class Form1 : Form
     {
+        // --- ë‚´ë¶€ ë°ì´í„° ëª¨ë¸ ---
+        private class Record
+        {
+            public long Id;
+            public string Name = "";
+            public string Status = "";
+            public string Reason = "";
+            public string Memo = "";
+        }
+
+        private List<Record> records = new List<Record>();   // ì „ì²´ ë°ì´í„° ìºì‹œ
+        private long? selectedRowId = null;                  // í˜„ì¬ ì„ íƒ ë ˆì½”ë“œ
+        private int sortColumn = 0;                          // 0:ì´ë¦„, 1:ìƒíƒœ, 2:ì‚¬ìœ , 3:ë©”ëª¨
+        private bool sortAsc = true;                         // ì •ë ¬ ë°©í–¥
+
         public Form1()
         {
             InitializeComponent();
+
+            // ë©”ëª¨ ë°•ìŠ¤ UI
+            txtMemo.Multiline = true;
+            txtMemo.ScrollBars = ScrollBars.Vertical;
+            txtMemo.WordWrap = true;
+
+            // ë¼ë””ì˜¤/ì½¤ë³´ ê¸°ë³¸
+            rdoPresent.Checked = true;
+            rdoAbsent.Checked = false;
+            cmbReason.DropDownStyle = ComboBoxStyle.DropDownList;
+
+            // í•„í„° ê¸°ë³¸
+            cmbFilterField.SelectedIndex = 0; // "ì „ì²´"
+            txtFilter.TextChanged += (_, __) => ApplyFilterSortAndRender();
+            cmbFilterField.SelectedIndexChanged += (_, __) => ApplyFilterSortAndRender();
+
+            UpdateReasonUI();
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            cmbReason.Items.AddRange(new string[] { "È¸ÀÇ", "ÃâÀå", "¿Ü±Ù", "ÈŞ°¡", "±³À°", "±âÅ¸" });
-            cmbReason.Enabled = false;
-        }
+            // ì‚¬ìœ  ëª©ë¡
+            cmbReason.Items.Clear();
+            cmbReason.Items.AddRange(new string[] { "íšŒì˜", "ì¶œì¥", "ì™¸ê·¼", "íœ´ê°€", "êµìœ¡", "ê¸°íƒ€" });
 
-        private void rdoPresent_CheckedChanged(object sender, EventArgs e)
-        {
-            cmbReason.Enabled = !rdoPresent.Checked;
-        }
-
-        private void btnSave_Click(object sender, EventArgs e)
-        {
-            string name = txtName.Text.Trim();
-            string status = rdoPresent.Checked ? "Àç½Ç" : "ºÎÀç";
-            string reason = rdoPresent.Checked ? "" : cmbReason.Text;
-            string memo = txtMemo.Text.Trim();
-
-            // À¯È¿¼º °Ë»ç
-            if (string.IsNullOrWhiteSpace(name))
+            // DB íŒŒì¼ ì¤€ë¹„ ë° ìŠ¤í‚¤ë§ˆ ë³´ì •
+            string dbPath = GetDbPath();
+            if (!File.Exists(dbPath))
             {
-                MessageBox.Show("ÀÌ¸§À» ÀÔ·ÂÇÏ¼¼¿ä.", "ÀÔ·Â ¿À·ù", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                txtName.Focus();
-                return;
-            }
-
-            if (!rdoPresent.Checked && string.IsNullOrWhiteSpace(reason))
-            {
-                MessageBox.Show("ºÎÀç »çÀ¯¸¦ ¼±ÅÃÇÏ¼¼¿ä.", "ÀÔ·Â ¿À·ù", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                cmbReason.Focus();
-                return;
-            }
-
-            // ¸Ş½ÃÁö ¹Ú½º È®ÀÎ
-            string message = $"ÀÌ¸§: {name}\n»óÅÂ: {status}";
-            if (status == "ºÎÀç")
-                message += $"\n»çÀ¯: {reason}";
-            message += $"\n¸Ş¸ğ: {memo}";
-
-            MessageBox.Show(message, "ÀÔ·Â°ª È®ÀÎ");
-
-            if (listViewStatus.SelectedItems.Count > 0)
-            {
-                // ¼±ÅÃµÈ Ç×¸ñ ¼öÁ¤
-                ListViewItem selected = listViewStatus.SelectedItems[0];
-                selected.SubItems[0].Text = name;
-                selected.SubItems[1].Text = status;
-                selected.SubItems[2].Text = reason;
-                selected.SubItems[3].Text = memo;
+                SQLiteConnection.CreateFile(dbPath);
+                using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+                conn.Open();
+                using var cmd = new SQLiteCommand(@"
+                    CREATE TABLE IF NOT EXISTS Status (
+                        Id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Name   TEXT,
+                        Status TEXT,
+                        Reason TEXT,
+                        Memo   TEXT
+                    );", conn);
+                cmd.ExecuteNonQuery();
+                MessageBox.Show("DB íŒŒì¼ executive_status.db ê°€ ìƒì„±ë˜ì—ˆìŠµë‹ˆë‹¤.");
             }
             else
             {
-                // »õ Ç×¸ñ Ãß°¡
-                string[] row = { name, status, reason, memo };
-                ListViewItem item = new ListViewItem(row);
-                listViewStatus.Items.Add(item);
+                // ê¸°ì¡´ì— Name PRIMARY KEYì˜€ë˜ ê²½ìš° ìë™ ë§ˆì´ê·¸ë ˆì´ì…˜
+                EnsureSchema();
             }
 
-            // ÀÔ·Â ÇÊµå ÃÊ±âÈ­
-            txtName.Text = "";
-            rdoPresent.Checked = true; // ±âº»°ªÀ» 'Àç½Ç'·Î ¼³Á¤
-            cmbReason.SelectedIndex = -1;
-            cmbReason.Enabled = false;
-            txtMemo.Text = "";
+            LoadDataFromDB();
+            ApplyFilterSortAndRender();
         }
 
-        private void txtName_TextChanged(object sender, EventArgs e)
+        private string GetDbPath() =>
+            Path.Combine(Application.StartupPath, "executive_status.db");
+
+        /// <summary>
+        /// ê¸°ì¡´ í…Œì´ë¸”ì— Name PKê°™ì€ ì œì•½ì´ ìˆìœ¼ë©´
+        /// Id INTEGER PRIMARY KEY AUTOINCREMENT êµ¬ì¡°ë¡œ ë§ˆì´ê·¸ë ˆì´ì…˜
+        /// </summary>
+        private void EnsureSchema()
         {
-            // ÇÊ¿ä ½Ã ±¸Çö
+            try
+            {
+                using var conn = new SQLiteConnection($"Data Source={GetDbPath()};Version=3;");
+                conn.Open();
+
+                // í˜„ì¬ ìŠ¤í‚¤ë§ˆ ì ê²€
+                var cols = new List<(string name, bool pk)>();
+                using (var cmd = new SQLiteCommand("PRAGMA table_info(Status);", conn))
+                using (var rd = cmd.ExecuteReader())
+                {
+                    while (rd.Read())
+                    {
+                        string name = rd["name"]?.ToString() ?? "";
+                        int pk = Convert.ToInt32(rd["pk"]);
+                        cols.Add((name, pk == 1));
+                    }
+                }
+
+                bool hasId = cols.Any(c => c.name.Equals("Id", StringComparison.OrdinalIgnoreCase));
+                bool nameIsPk = cols.Any(c => c.name.Equals("Name", StringComparison.OrdinalIgnoreCase) && c.pk);
+
+                if (!hasId || nameIsPk)
+                {
+                    using var tx = conn.BeginTransaction();
+
+                    // ìƒˆ í…Œì´ë¸” ìƒì„±
+                    using (var create = new SQLiteCommand(@"
+                        CREATE TABLE IF NOT EXISTS Status_new(
+                            Id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                            Name   TEXT,
+                            Status TEXT,
+                            Reason TEXT,
+                            Memo   TEXT
+                        );", conn, tx))
+                        create.ExecuteNonQuery();
+
+                    // ë°ì´í„° ì´ê´€
+                    using (var copy = new SQLiteCommand(
+                        "INSERT INTO Status_new (Name, Status, Reason, Memo) SELECT Name, Status, Reason, Memo FROM Status;", conn, tx))
+                        copy.ExecuteNonQuery();
+
+                    // êµì²´
+                    using (var drop = new SQLiteCommand("DROP TABLE Status;", conn, tx))
+                        drop.ExecuteNonQuery();
+                    using (var rename = new SQLiteCommand("ALTER TABLE Status_new RENAME TO Status;", conn, tx))
+                        rename.ExecuteNonQuery();
+
+                    tx.Commit();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("ìŠ¤í‚¤ë§ˆ ë³´ì • ì¤‘ ì˜¤ë¥˜: " + ex.Message);
+            }
         }
+
+        // --- DB ë¡œë“œ ---
+        private void LoadDataFromDB()
+        {
+            try
+            {
+                using var conn = new SQLiteConnection($"Data Source={GetDbPath()};Version=3;");
+                conn.Open();
+
+                // Idê°€ ìˆìœ¼ë©´ ê·¸ê±¸ ì“°ê³ , ì—†ì–´ë„ ROWID ë³„ì¹­ìœ¼ë¡œ Idë¥¼ ì–»ì„ ìˆ˜ ìˆìŒ
+                string sql = "SELECT COALESCE(Id, rowid) AS Id, Name, Status, Reason, Memo FROM Status ORDER BY COALESCE(Id, rowid)";
+                using var cmd = new SQLiteCommand(sql, conn);
+                using SQLiteDataReader reader = cmd.ExecuteReader();
+
+                records.Clear();
+                while (reader.Read())
+                {
+                    records.Add(new Record
+                    {
+                        Id = (long)reader["Id"],
+                        Name = reader["Name"]?.ToString() ?? "",
+                        Status = reader["Status"]?.ToString() ?? "",
+                        Reason = reader["Reason"]?.ToString() ?? "",
+                        Memo = reader["Memo"]?.ToString() ?? ""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("DB ë¡œë“œ ì¤‘ ì˜¤ë¥˜ ë°œìƒ: " + ex.Message);
+            }
+        }
+
+        // --- UI ìƒíƒœ ---
+        private void UpdateReasonUI()
+        {
+            bool absent = rdoAbsent.Checked;
+            cmbReason.Enabled = absent;
+            if (!absent)
+            {
+                cmbReason.SelectedIndex = -1;
+                cmbReason.Text = string.Empty;
+            }
+        }
+
+        private void rdoPresent_CheckedChanged(object sender, EventArgs e) => UpdateReasonUI();
+        private void rdoAbsent_CheckedChanged(object sender, EventArgs e) => UpdateReasonUI();
+
         private void listViewStatus_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (listViewStatus.SelectedItems.Count == 0)
+            {
+                selectedRowId = null;
                 return;
+            }
 
-            ListViewItem selected = listViewStatus.SelectedItems[0];
+            var selected = listViewStatus.SelectedItems[0];
             txtName.Text = selected.SubItems[0].Text;
-            string status = selected.SubItems[1].Text;
+
+            rdoPresent.Checked = (selected.SubItems[1].Text == "ì¬ì‹¤");
+            rdoAbsent.Checked = !rdoPresent.Checked;
+
             cmbReason.Text = selected.SubItems[2].Text;
             txtMemo.Text = selected.SubItems[3].Text;
 
-            if (status == "Àç½Ç")
-                rdoPresent.Checked = true;
-            else
-                rdoAbsent.Checked = true;
+            selectedRowId = (long?)selected.Tag;
+            UpdateReasonUI();
         }
-        private void btnDelete_Click(object sender, EventArgs e)
+
+        // --- ì €ì¥(ì¶”ê°€/ìˆ˜ì •) ---
+        private void btnSave_Click(object sender, EventArgs e)
         {
-            if (listViewStatus.SelectedItems.Count > 0)
+            string name = txtName.Text.Trim();
+            string status = rdoPresent.Checked ? "ì¬ì‹¤" : "ë¶€ì¬";
+            string reason = rdoPresent.Checked ? "" : cmbReason.Text;
+            string memo = txtMemo.Text.Trim();
+
+            // ìœ íš¨ì„±
+            bool ok = true;
+            if (string.IsNullOrWhiteSpace(name))
             {
-                listViewStatus.Items.Remove(listViewStatus.SelectedItems[0]);
+                txtName.BackColor = Color.MistyRose; ok = false;
+            }
+            else txtName.BackColor = Theme.Window;
+
+            if (!rdoPresent.Checked && string.IsNullOrWhiteSpace(reason))
+            {
+                cmbReason.BackColor = Color.MistyRose; ok = false;
+            }
+            else cmbReason.BackColor = Theme.Window;
+
+            if (!ok)
+            {
+                MessageBox.Show("í•„ìˆ˜ ì…ë ¥ í•­ëª©ì„ í™•ì¸í•˜ì„¸ìš”.");
+                return;
+            }
+
+            try
+            {
+                using var conn = new SQLiteConnection($"Data Source={GetDbPath()};Version=3;");
+                conn.Open();
+
+                if (selectedRowId.HasValue)
+                {
+                    string usql = @"UPDATE Status
+                                    SET Name=@Name, Status=@Status, Reason=@Reason, Memo=@Memo
+                                    WHERE COALESCE(Id, rowid)=@Id";
+                    using var ucmd = new SQLiteCommand(usql, conn);
+                    ucmd.Parameters.AddWithValue("@Name", name);
+                    ucmd.Parameters.AddWithValue("@Status", status);
+                    ucmd.Parameters.AddWithValue("@Reason", reason);
+                    ucmd.Parameters.AddWithValue("@Memo", memo);
+                    ucmd.Parameters.AddWithValue("@Id", selectedRowId.Value);
+                    ucmd.ExecuteNonQuery();
+                }
+                else
+                {
+                    string isql = "INSERT INTO Status (Name, Status, Reason, Memo) VALUES (@Name,@Status,@Reason,@Memo)";
+                    using var icmd = new SQLiteCommand(isql, conn);
+                    icmd.Parameters.AddWithValue("@Name", name);
+                    icmd.Parameters.AddWithValue("@Status", status);
+                    icmd.Parameters.AddWithValue("@Reason", reason);
+                    icmd.Parameters.AddWithValue("@Memo", memo);
+                    icmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("DB ì €ì¥ ì¤‘ ì˜¤ë¥˜: " + ex.Message);
+                return;
+            }
+
+            lblStatus.Text = $"ì €ì¥ ì™„ë£Œ - {DateTime.Now:HH:mm:ss}";
+            ClearInputs();
+            LoadDataFromDB();
+            ApplyFilterSortAndRender();
+        }
+
+        // --- ì„ íƒí–‰ ì‚­ì œ & Del í‚¤ ---
+        private void btnDelete_Click(object sender, EventArgs e) => DeleteSelectedRows();
+        private void listViewStatus_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Delete)
+            {
+                DeleteSelectedRows();
+                e.Handled = true;
+            }
+        }
+        private void DeleteSelectedRows()
+        {
+            if (listViewStatus.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("ì‚­ì œí•  í•­ëª©ì„ ì„ íƒí•˜ì„¸ìš”.");
+                return;
+            }
+
+            int n = listViewStatus.SelectedItems.Count;
+            if (MessageBox.Show($"{n}ê±´ì„ ì‚­ì œí•˜ì‹œê² ìŠµë‹ˆê¹Œ?", "í™•ì¸",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            try
+            {
+                using var conn = new SQLiteConnection($"Data Source={GetDbPath()};Version=3;");
+                conn.Open();
+
+                using var tx = conn.BeginTransaction();
+                string dsql = "DELETE FROM Status WHERE COALESCE(Id, rowid)=@Id";
+                using var dcmd = new SQLiteCommand(dsql, conn, tx);
+
+                foreach (ListViewItem it in listViewStatus.SelectedItems)
+                {
+                    if (it.Tag is long id)
+                    {
+                        dcmd.Parameters.Clear();
+                        dcmd.Parameters.AddWithValue("@Id", id);
+                        dcmd.ExecuteNonQuery();
+                    }
+                }
+                tx.Commit();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("ì‚­ì œ ì¤‘ ì˜¤ë¥˜: " + ex.Message);
+                return;
+            }
+
+            lblStatus.Text = $"ì‚­ì œ ì™„ë£Œ - {DateTime.Now:HH:mm:ss}";
+            ClearInputs();
+            LoadDataFromDB();
+            ApplyFilterSortAndRender();
+        }
+
+        // --- ì •ë ¬/í•„í„°/ë Œë” ---
+        private void listViewStatus_ColumnClick(object sender, ColumnClickEventArgs e)
+        {
+            if (sortColumn == e.Column) sortAsc = !sortAsc;
+            else { sortColumn = e.Column; sortAsc = true; }
+            ApplyFilterSortAndRender();
+        }
+
+        private bool MatchFilter(Record r)
+        {
+            string key = (txtFilter.Text ?? "").Trim();
+            if (key.Length == 0) return true;
+
+            StringComparison cmp = StringComparison.OrdinalIgnoreCase;
+            switch (cmbFilterField.SelectedItem?.ToString())
+            {
+                case "ì´ë¦„": return r.Name.IndexOf(key, cmp) >= 0;
+                case "ìƒíƒœ": return r.Status.IndexOf(key, cmp) >= 0;
+                case "ì‚¬ìœ ": return r.Reason.IndexOf(key, cmp) >= 0;
+                case "ë©”ëª¨": return r.Memo.IndexOf(key, cmp) >= 0;
+                default:      // ì „ì²´
+                    return r.Name.IndexOf(key, cmp) >= 0
+                        || r.Status.IndexOf(key, cmp) >= 0
+                        || r.Reason.IndexOf(key, cmp) >= 0
+                        || r.Memo.IndexOf(key, cmp) >= 0;
+            }
+        }
+
+        private IEnumerable<Record> SortRecords(IEnumerable<Record> seq)
+        {
+            Func<Record, object> key = sortColumn switch
+            {
+                0 => r => r.Name,
+                1 => r => r.Status,
+                2 => r => r.Reason,
+                3 => r => r.Memo,
+                _ => r => r.Id
+            };
+            return sortAsc ? seq.OrderBy(key) : seq.OrderByDescending(key);
+        }
+
+        private void ApplyFilterSortAndRender()
+        {
+            var filtered = records.Where(MatchFilter);
+            var ordered = SortRecords(filtered);
+
+            listViewStatus.BeginUpdate();
+            listViewStatus.Items.Clear();
+
+            foreach (var r in ordered)
+            {
+                var item = new ListViewItem(new[] { r.Name, r.Status, r.Reason, r.Memo })
+                {
+                    Tag = r.Id
+                };
+                listViewStatus.Items.Add(item);
+            }
+            listViewStatus.EndUpdate();
+
+            UpdateSortGlyph();
+            listViewStatus.Invalidate(); // OwnerDraw ì¬ê·¸ë¦¬ê¸°
+        }
+
+        // í—¤ë” í…ìŠ¤íŠ¸ì— ì •ë ¬ ë°©í–¥ í™”ì‚´í‘œ í‘œì‹œ
+        private void UpdateSortGlyph()
+        {
+            string[] baseTexts = { "ì´ë¦„", "ìƒíƒœ", "ì‚¬ìœ ", "ë©”ëª¨" };
+            for (int i = 0; i < baseTexts.Length; i++)
+            {
+                string arrow = (i == sortColumn) ? (sortAsc ? " â–²" : " â–¼") : "";
+                listViewStatus.Columns[i].Text = baseTexts[i] + arrow;
+            }
+        }
+
+        private void ClearInputs()
+        {
+            txtName.Text = "";
+            rdoPresent.Checked = true;
+            rdoAbsent.Checked = false;
+            cmbReason.SelectedIndex = -1;
+            txtMemo.Text = "";
+            selectedRowId = null;
+            listViewStatus.SelectedItems.Clear();
+            txtName.Focus();
+            UpdateReasonUI();
+        }
+
+        // =========================
+        // OwnerDraw: í—¤ë”/í–‰/ì„œë¸Œì•„ì´í…œ (ìƒíƒœ ë°°ì§€ í¬í•¨)
+        // =========================
+        private void listViewStatus_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
+        {
+            using var headerBg = new SolidBrush(Theme.Header);
+            using var headerBorder = new Pen(Theme.HeaderBorder);
+            e.Graphics.FillRectangle(headerBg, e.Bounds);
+            e.Graphics.DrawRectangle(headerBorder, e.Bounds.X, e.Bounds.Y, e.Bounds.Width - 1, e.Bounds.Height - 1);
+
+            TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis;
+            var textRect = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 16, e.Bounds.Height);
+            TextRenderer.DrawText(e.Graphics, e.Header.Text, listViewStatus.Font, textRect, Theme.Text, flags);
+        }
+
+        private void listViewStatus_DrawItem(object sender, DrawListViewItemEventArgs e)
+        {
+            bool selected = (e.State & ListViewItemStates.Selected) != 0;
+            Color back = selected ? Theme.RowSelected : ((e.ItemIndex % 2 == 0) ? Theme.RowLight : Theme.RowAlt);
+            using var bg = new SolidBrush(back);
+            e.Graphics.FillRectangle(bg, e.Bounds);
+
+            if ((e.State & ListViewItemStates.Focused) != 0)
+                e.DrawFocusRectangle();
+        }
+
+        private void listViewStatus_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
+        {
+            bool selected = e.Item.Selected;
+            Color fore = selected ? Theme.RowSelectedText : Theme.Text;
+
+            if (e.ColumnIndex == 1) // ìƒíƒœ ë°°ì§€
+            {
+                string status = e.SubItem.Text.Trim();
+                bool present = status == "ì¬ì‹¤";
+
+                Rectangle r = e.Bounds;
+                SizeF textSize = e.Graphics.MeasureString(status, listViewStatus.Font);
+                int padH = 8, padV = 4;
+                int badgeW = (int)Math.Min(r.Width - 10, textSize.Width + padH * 2);
+                int badgeH = (int)Math.Min(r.Height - 6, textSize.Height + padV * 2);
+                Rectangle badge = new Rectangle(r.X + 8, r.Y + (r.Height - badgeH) / 2, badgeW, badgeH);
+
+                Color badgeBg = present ? Theme.BadgePresent : Theme.BadgeAbsent;
+                using var path = new System.Drawing.Drawing2D.GraphicsPath();
+                int radius = 8, d = radius * 2;
+                path.AddArc(badge.X, badge.Y, d, d, 180, 90);
+                path.AddArc(badge.Right - d, badge.Y, d, d, 270, 90);
+                path.AddArc(badge.Right - d, badge.Bottom - d, d, d, 0, 90);
+                path.AddArc(badge.X, badge.Bottom - d, d, d, 90, 90);
+                path.CloseFigure();
+
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var sb = new SolidBrush(badgeBg)) e.Graphics.FillPath(sb, path);
+                TextRenderer.DrawText(e.Graphics, status, listViewStatus.Font,
+                    badge, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
             else
             {
-                MessageBox.Show("»èÁ¦ÇÒ Ç×¸ñÀ» ¼±ÅÃÇÏ¼¼¿ä.");
+                Rectangle r = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 12, e.Bounds.Height);
+                TextRenderer.DrawText(e.Graphics, e.SubItem.Text, listViewStatus.Font, r, fore,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
             }
         }
 
-        private void btnEdit_Click(object sender, EventArgs e)
+        // --- í…Œë§ˆ íŒ”ë ˆíŠ¸ ---
+        private static class Theme
         {
-            if (listViewStatus.SelectedItems.Count > 0)
-            {
-                ListViewItem item = listViewStatus.SelectedItems[0];
+            public static readonly Color Background = Color.FromArgb(246, 248, 250); // í¼ ë°°ê²½
+            public static readonly Color Card = Color.White;
+            public static readonly Color Accent = Color.FromArgb(52, 152, 219);      // ì €ì¥ ë²„íŠ¼
+            public static readonly Color AccentDark = Color.FromArgb(41, 128, 185);
+            public static readonly Color Danger = Color.FromArgb(231, 76, 60);       // ì‚­ì œ
+            public static readonly Color DangerDark = Color.FromArgb(192, 57, 43);
+            public static readonly Color Muted = Color.FromArgb(108, 117, 125);
 
-                // ±âÁ¸ °ª ÀÔ·Â ÇÊµå·Î ºÒ·¯¿À±â
-                txtName.Text = item.SubItems[0].Text;
-                string status = item.SubItems[1].Text;
-                rdoPresent.Checked = (status == "Àç½Ç");
-                rdoAbsent.Checked = (status == "ºÎÀç");
-                cmbReason.Text = item.SubItems[2].Text;
-                txtMemo.Text = item.SubItems[3].Text;
+            public static readonly Color Header = Color.FromArgb(242, 244, 246);
+            public static readonly Color HeaderBorder = Color.FromArgb(220, 224, 228);
+            public static readonly Color RowLight = Color.White;
+            public static readonly Color RowAlt = Color.FromArgb(245, 247, 249);
+            public static readonly Color RowSelected = Color.FromArgb(225, 236, 250);
+            public static readonly Color RowSelectedText = Color.FromArgb(25, 35, 45);
+            public static readonly Color Text = Color.FromArgb(45, 52, 54);
 
-                // Ç×¸ñ »èÁ¦ (¼öÁ¤ ÈÄ ÀúÀå ½Ã ´Ù½Ã Ãß°¡µÇµµ·Ï)
-                listViewStatus.Items.Remove(item);
-            }
-            else
-            {
-                MessageBox.Show("¼öÁ¤ÇÒ Ç×¸ñÀ» ¼±ÅÃÇÏ¼¼¿ä.");
-            }
-        }
+            // ë°°ì§€ ìƒ‰
+            public static readonly Color BadgePresent = Color.FromArgb(46, 204, 113); // ì¬ì‹¤
+            public static readonly Color BadgeAbsent = Color.FromArgb(189, 62, 55);  // ë¶€ì¬
 
-        private void btnEdit_Click_1(object sender, EventArgs e)
-        {
-
-        }
-
-        private void btnDelete_Click_1(object sender, EventArgs e)
-        {
-
+            public static readonly Color Window = SystemColors.Window;
         }
     }
 }
