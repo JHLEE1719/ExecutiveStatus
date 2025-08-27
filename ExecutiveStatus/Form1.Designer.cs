@@ -35,6 +35,7 @@ namespace ExecutiveStatus
         private Panel panelForm;
         private Panel panelButtons;
 
+        /// <summary>Designer가 소유한 리소스 정리</summary>
         protected override void Dispose(bool disposing)
         {
             if (disposing && (components != null)) components.Dispose();
@@ -228,7 +229,9 @@ namespace ExecutiveStatus
             this.Controls.Add(this.listViewStatus);
             this.Controls.Add(this.lblStatus);
 
+            // 폼 이벤트
             this.Load += new System.EventHandler(this.Form1_Load);
+
             this.ResumeLayout(false);
             this.PerformLayout();
         }

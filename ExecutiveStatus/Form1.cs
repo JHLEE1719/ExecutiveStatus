@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using Microsoft.Win32; // 자동 시작(레지스트리)
 
 namespace ExecutiveStatus
 {
@@ -20,10 +21,16 @@ namespace ExecutiveStatus
             public string Memo = "";
         }
 
-        private List<Record> records = new List<Record>();   // 전체 데이터 캐시
-        private long? selectedRowId = null;                  // 현재 선택 레코드
-        private int sortColumn = 0;                          // 0:이름, 1:상태, 2:사유, 3:메모
-        private bool sortAsc = true;                         // 정렬 방향
+        private readonly List<Record> records = new List<Record>(); // 전체 데이터 캐시
+        private long? selectedRowId = null;                         // 현재 선택 레코드
+        private int sortColumn = 0;                                 // 0:이름, 1:상태, 2:사유, 3:메모
+        private bool sortAsc = true;                                // 정렬 방향
+
+        // --- 트레이 에이전트 필드 ---
+        private NotifyIcon? tray;
+        private ContextMenuStrip? trayMenu;
+        private bool allowRealExit = false; // 트레이 메뉴 '종료'로만 진짜 종료
+        private bool trayBalloonShown = false;
 
         public Form1()
         {
@@ -44,10 +51,13 @@ namespace ExecutiveStatus
             txtFilter.TextChanged += (_, __) => ApplyFilterSortAndRender();
             cmbFilterField.SelectedIndexChanged += (_, __) => ApplyFilterSortAndRender();
 
+            // 트레이 에이전트 초기화
+            InitTrayAgent();
+
             UpdateReasonUI();
         }
 
-        private void Form1_Load(object sender, EventArgs e)
+        private void Form1_Load(object? sender, EventArgs e)
         {
             // 사유 목록
             cmbReason.Items.Clear();
@@ -60,6 +70,10 @@ namespace ExecutiveStatus
                 SQLiteConnection.CreateFile(dbPath);
                 using var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
                 conn.Open();
+
+                // (안정성) WAL 모드 권장
+                using (var pragma = new SQLiteCommand("PRAGMA journal_mode=WAL;", conn)) pragma.ExecuteNonQuery();
+
                 using var cmd = new SQLiteCommand(@"
                     CREATE TABLE IF NOT EXISTS Status (
                         Id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,6 +83,7 @@ namespace ExecutiveStatus
                         Memo   TEXT
                     );", conn);
                 cmd.ExecuteNonQuery();
+
                 MessageBox.Show("DB 파일 executive_status.db 가 생성되었습니다.");
             }
             else
@@ -85,7 +100,7 @@ namespace ExecutiveStatus
             Path.Combine(Application.StartupPath, "executive_status.db");
 
         /// <summary>
-        /// 기존 테이블에 Name PK같은 제약이 있으면
+        /// 기존 테이블에 Name PK 같은 제약이 있으면
         /// Id INTEGER PRIMARY KEY AUTOINCREMENT 구조로 마이그레이션
         /// </summary>
         private void EnsureSchema()
@@ -94,6 +109,9 @@ namespace ExecutiveStatus
             {
                 using var conn = new SQLiteConnection($"Data Source={GetDbPath()};Version=3;");
                 conn.Open();
+
+                // (안정성) WAL 모드
+                using (var pragma = new SQLiteCommand("PRAGMA journal_mode=WAL;", conn)) pragma.ExecuteNonQuery();
 
                 // 현재 스키마 점검
                 var cols = new List<(string name, bool pk)>();
@@ -154,7 +172,6 @@ namespace ExecutiveStatus
                 using var conn = new SQLiteConnection($"Data Source={GetDbPath()};Version=3;");
                 conn.Open();
 
-                // Id가 있으면 그걸 쓰고, 없어도 ROWID 별칭으로 Id를 얻을 수 있음
                 string sql = "SELECT COALESCE(Id, rowid) AS Id, Name, Status, Reason, Memo FROM Status ORDER BY COALESCE(Id, rowid)";
                 using var cmd = new SQLiteCommand(sql, conn);
                 using SQLiteDataReader reader = cmd.ExecuteReader();
@@ -190,10 +207,10 @@ namespace ExecutiveStatus
             }
         }
 
-        private void rdoPresent_CheckedChanged(object sender, EventArgs e) => UpdateReasonUI();
-        private void rdoAbsent_CheckedChanged(object sender, EventArgs e) => UpdateReasonUI();
+        private void rdoPresent_CheckedChanged(object? sender, EventArgs e) => UpdateReasonUI();
+        private void rdoAbsent_CheckedChanged(object? sender, EventArgs e) => UpdateReasonUI();
 
-        private void listViewStatus_SelectedIndexChanged(object sender, EventArgs e)
+        private void listViewStatus_SelectedIndexChanged(object? sender, EventArgs e)
         {
             if (listViewStatus.SelectedItems.Count == 0)
             {
@@ -215,7 +232,7 @@ namespace ExecutiveStatus
         }
 
         // --- 저장(추가/수정) ---
-        private void btnSave_Click(object sender, EventArgs e)
+        private void btnSave_Click(object? sender, EventArgs e)
         {
             string name = txtName.Text.Trim();
             string status = rdoPresent.Checked ? "재실" : "부재";
@@ -284,8 +301,8 @@ namespace ExecutiveStatus
         }
 
         // --- 선택행 삭제 & Del 키 ---
-        private void btnDelete_Click(object sender, EventArgs e) => DeleteSelectedRows();
-        private void listViewStatus_KeyDown(object sender, KeyEventArgs e)
+        private void btnDelete_Click(object? sender, EventArgs e) => DeleteSelectedRows();
+        private void listViewStatus_KeyDown(object? sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Delete)
             {
@@ -338,7 +355,7 @@ namespace ExecutiveStatus
         }
 
         // --- 정렬/필터/렌더 ---
-        private void listViewStatus_ColumnClick(object sender, ColumnClickEventArgs e)
+        private void listViewStatus_ColumnClick(object? sender, ColumnClickEventArgs e)
         {
             if (sortColumn == e.Column) sortAsc = !sortAsc;
             else { sortColumn = e.Column; sortAsc = true; }
@@ -427,7 +444,7 @@ namespace ExecutiveStatus
         // =========================
         // OwnerDraw: 헤더/행/서브아이템 (상태 배지 포함)
         // =========================
-        private void listViewStatus_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
+        private void listViewStatus_DrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
         {
             using var headerBg = new SolidBrush(Theme.Header);
             using var headerBorder = new Pen(Theme.HeaderBorder);
@@ -439,7 +456,7 @@ namespace ExecutiveStatus
             TextRenderer.DrawText(e.Graphics, e.Header.Text, listViewStatus.Font, textRect, Theme.Text, flags);
         }
 
-        private void listViewStatus_DrawItem(object sender, DrawListViewItemEventArgs e)
+        private void listViewStatus_DrawItem(object? sender, DrawListViewItemEventArgs e)
         {
             bool selected = (e.State & ListViewItemStates.Selected) != 0;
             Color back = selected ? Theme.RowSelected : ((e.ItemIndex % 2 == 0) ? Theme.RowLight : Theme.RowAlt);
@@ -450,7 +467,7 @@ namespace ExecutiveStatus
                 e.DrawFocusRectangle();
         }
 
-        private void listViewStatus_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
+        private void listViewStatus_DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
         {
             bool selected = e.Item.Selected;
             Color fore = selected ? Theme.RowSelectedText : Theme.Text;
@@ -513,6 +530,97 @@ namespace ExecutiveStatus
             public static readonly Color BadgeAbsent = Color.FromArgb(189, 62, 55);  // 부재
 
             public static readonly Color Window = SystemColors.Window;
+        }
+
+        // =========================
+        // 트레이 에이전트: 초기화/동작/종료/자동시작
+        // =========================
+        private void InitTrayAgent()
+        {
+            // components 컨테이너에 연결하여 자동 Dispose
+            trayMenu = new ContextMenuStrip(components);
+            trayMenu.Items.Add("열기", null, (_, __) => RestoreFromTray());
+            trayMenu.Items.Add("종료", null, (_, __) => ExitFromTray());
+
+            tray = new NotifyIcon(components)
+            {
+                Icon = this.Icon, // 프로젝트 아이콘
+                Visible = true,
+                Text = "임원 재실 현황 에이전트",
+                ContextMenuStrip = trayMenu
+            };
+            tray.DoubleClick += (_, __) => RestoreFromTray();
+
+        #if !DEBUG
+            this.Shown += OnShown_MinimizeToTrayOnce;
+        #endif
+        }
+
+
+        private void OnFormShown_MinimizeToTrayOnce(object? sender, EventArgs e)
+        {
+            // 한 번만 실행되도록 핸들러 해제
+            this.Shown -= OnFormShown_MinimizeToTrayOnce;
+            MinimizeToTrayAtStartup();
+        }
+
+        private void MinimizeToTrayAtStartup()
+        {
+            this.ShowInTaskbar = false;
+            this.WindowState = FormWindowState.Minimized;
+            this.Hide();
+
+            if (!trayBalloonShown && tray != null)
+            {
+                trayBalloonShown = true;
+                tray.ShowBalloonTip(1500, "실행됨", "임원 재실 현황 에이전트가 트레이에서 동작 중입니다.", ToolTipIcon.Info);
+            }
+        }
+
+        private void RestoreFromTray()
+        {
+            this.Show();
+            this.WindowState = FormWindowState.Normal;
+            this.ShowInTaskbar = true;
+            this.Activate();
+        }
+
+        private void ExitFromTray()
+        {
+            allowRealExit = true;
+            if (tray != null) tray.Visible = false;
+            Application.Exit();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!allowRealExit && e.CloseReason == CloseReason.UserClosing)
+            {
+                // 종료 대신 트레이로 보냄
+                e.Cancel = true;
+                this.Hide();
+                this.ShowInTaskbar = false;
+                return;
+            }
+            base.OnFormClosing(e);
+        }
+
+        // (선택) 자동 시작 켜기/끄기
+        private const string AutoStartName = "ExecutiveStatusAgent";
+        private void EnableAutoStart()
+        {
+            using var run = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            run?.SetValue(AutoStartName, Application.ExecutablePath);
+            lblStatus.Text = "자동 시작: 활성화됨";
+        }
+        private void DisableAutoStart()
+        {
+            using var run = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (run?.GetValue(AutoStartName) != null)
+                run.DeleteValue(AutoStartName);
+            lblStatus.Text = "자동 시작: 비활성화됨";
         }
     }
 }

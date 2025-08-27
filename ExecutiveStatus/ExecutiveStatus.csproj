@@ -1,15 +1,36 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <UseWindowsForms>true</UseWindowsForms>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
+	<PropertyGroup>
+		<!-- WinForms 실행 파일 -->
+		<OutputType>WinExe</OutputType>
 
+		<!-- .NET 8 Windows -->
+		<TargetFramework>net8.0-windows</TargetFramework>
+		<UseWindowsForms>true</UseWindowsForms>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<!-- 시작 개체(엔트리포인트) -->
+		<StartupObject>ExecutiveStatus.Program</StartupObject>
+
+		<!-- SQLite와 일치: x64 고정 -->
+		<Platforms>x64</Platforms>
+		<PlatformTarget>x64</PlatformTarget>
+		<Prefer32Bit>false</Prefer32Bit>
+
+		<!-- 앱/트레이 아이콘 지정: 프로젝트 루트에 있는 Share.ico 사용 -->
+		<ApplicationIcon>Share.ico</ApplicationIcon>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- SQLite 패키지 -->
+		<PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
+	</ItemGroup>
+
+	<!-- 아이콘을 명시적으로 프로젝트에 포함-->
   <ItemGroup>
-    <PackageReference Include="System.Data.SQLite" Version="1.0.119" />
+    <None Include="Share.ico" />
   </ItemGroup>
+  
 
 </Project>
